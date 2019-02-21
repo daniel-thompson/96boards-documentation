@@ -10,6 +10,7 @@ permalink: /documentation/enterprise/developerbox/installation/board-recovery.md
    * [Low-level (CM3) firmware recovery](#low-level-cm3-firmware-recovery)
       * [Update using serial flasher](#update-using-serial-flasher-1)
       * [JTAG recovery](#jtag-recovery)
+      * [SPI recovery](#SPI-recovery)
 
 <!-- Created by [gh-md-toc](https://github.com/ekalinin/github-markdown-toc) -->
 
@@ -200,7 +201,7 @@ Command Input >
 The JTAG recovery process allows the serial flasher to be run from SRAM,
 thus allowing the NOR to be updated.
 
-To recovery the board you will need a suitable JTAG programmer. The
+To recover the board you will need a suitable JTAG programmer. The
 SC2A11 is interfaced using 1.8v TTL logic. Your programmer must support
 1.8v signalling and, if the programmer supports powering the target
 device, this feature **must** be disabled before you connect the
@@ -288,3 +289,84 @@ flash write p-master-cm3
 >> Send new CM3 firmware via XMODEM <<
 ~~~
 
+## SPI recovery
+
+The SPI recovery process allows the SPI FLASH on the motherboard to be
+programmed using the SPI programmer that is built into the Developerbox.
+
+This method requires absolutely no special hardware, although it does
+require another computer drive the programmer and a USB type A to
+micro-B cable to connect them together. Be warned that this method is
+*extremely* slow; if you have access to a 1.8v serial adapter and/or a
+JTAG programmer then these approaches are recommended. Nevertheless
+the SPI recovery method is good for tool free disaster recovery.
+
+1. Currently Developerbox support can be found only in the development
+   version of `flashrom`; no released version includes a driver for the
+   Developerbox SPI programmer. To build `flashrom` from source on Debian
+   or a derived distribution try:
+   ```
+   git clone https://github.com/flashrom/flashrom
+   sudo apt install build-essential libpci-dev libusb-dev libusb-1.0-0-dev
+   make -j `nproc`
+   ./flashrom --help
+   # Check that developerbox is listed as a valid choice of programmer
+   ```
+2. [UNTESTED] Create a layout file to describe to `flashrom` how the FLASH is
+   organized:
+   ```
+   cat <<EOF > developerbox.layout
+   0000000:006ffff bootstrap
+   0070000:007ffff flasher
+   0080000:00fffff config
+   0100000:017ffff cm3
+   0180000:01fffff arm-tf
+   0200000:03fffff uefi
+   0400000:042ffff varstore
+   EOF
+   ```
+3. Connect a PC to the SPI programmer in the Developerbox:
+    * Turn off the Developerbox
+    * Change DSW4 from the default 00000000 to 10001000 (i.e. DSW4-1
+      and DSW4-5 should be turned on). Ensure you work with good lighting
+      when changing DIP switches; the banks are not all oriented the same
+      way making it important to double check which end is switch 1.
+    * Connect your PC to the USB micro-B debug UART socket on the
+      back panel of your Developerbox (this may require removing
+      the back plate because there is no cut out for the debug UART)
+    * Turn the Developerbox on again (it will not boot because the SPI
+      FLASH is now only accessible by the programmer but the power light
+      will come on as normal)
+4. [UNTESTED] Verify `flashrom` can communicate with the board:
+   ```
+   ./flashrom --programmer developerbox
+   # Check that the SPI FLASH chip is detected correctly
+   ```
+5. Make a backup of your existing SCP firmware (note that although the
+   file size of backup-cm3_only.log is 64MB, only the cm3 partition will
+   be valid):
+   ```
+   sudo ./flashrom \
+	--programmer developerbox \
+	--layout developerbox.layout --image cm3 \
+	--read backup-cm3_only.rom \
+	--output backup-cm3_only.log
+   ```
+6. [UNTESTED] Prepare a new `.rom` file to write back to your Developerbox:
+   ```
+   cp backup-cm3_only.rom new-cm3_only.rom
+   dd if=ramfw_20171102.bin of=new-cm3_only.rom bs=1 conv=notunc seek=524288
+   ```
+7. Write the new SCP firmware to your device:
+   ```
+   sudo ./flashrom \
+	--programmer developerbox \
+	--layout developerbox.layout --image cm3 \
+	--write new-cm3_only.rom --noverify-all
+	--output new-cm3_only.log
+   ```
+8. Restore DSW4 to the default values:
+    * Turn off the Developerbox
+    * Change DSW4 back to the default 00000000 (i.e. all DSW4 switches
+      should be turned off)
+    * Turn the Developerbox on again
